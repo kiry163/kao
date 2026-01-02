@@ -8,10 +8,13 @@
 
 - **⚡️ Warp 终端原生集成**: 如果你在使用 [Warp](https://www.warp.dev/) 终端，Kao 会直接读取其内部数据库获取报错信息。**零重放、零副作用、100% 精确**。
 - **🛡️ AI 安全审计**: 对于普通终端，Kao 在后台重运行命令前，会先让 AI 判断该命令是否安全。危险命令 (如 `rm`, `mv`, 非幂等 API) 会被自动拦截。
-- **🔧 交互式智能修复**: 检测到拼写错误 (Typo) 时，直接弹出交互式菜单，按回车即可立即修正并执行 (按 `Ctrl+C` 取消)。
-- **🔍 多模式支持**: 
-  - **Auto Mode**: 自动获取上一条命令分析。
-  - **Pipe Mode**: 支持 `command |& kao` 手动投喂日志。
+- **🧠 智能预测与建议**: 
+  - **出错时**: 给出详细原因分析 + 自然语言指导 (Advice) + 一键修复命令 (Suggestions)。
+  - **成功时**: 解释执行结果 + 预测你可能想执行的后续命令 (如 `mkdir` -> `cd`)。
+- **🌍 系统环境感知**: AI 会根据你的操作系统 (macOS/Linux) 推荐最原生的工具 (如 `brew` vs `apt`)。
+- **🔧 交互式智能修复**: 
+  - 漂亮的交互列表，包含命令功能注释。
+  - 支持 `Ctrl+C` 快捷取消。
 
 ## 📦 安装
 
@@ -82,31 +85,45 @@ function k() {
 
 ## 📖 使用指南
 
-### 1. 自动分析 (最常用)
+### 1. 自动分析与修复 (最常用)
 
-当你执行命令报错时，直接输入 `k`：
-
+**场景 A: 拼写错误**
 ```bash
 $ git brnch
 git: 'brnch' is not a git command. See 'git --help'.
 
 $ k
-? 检测到拼写错误，请选择修正后的命令执行 (Ctrl+C 取消): 
-> git branch
+? 请选择建议的命令 (Ctrl+C 取消)
+▸ git branch  修正拼写错误 (推荐)
 ```
 
-或者遇到运行时错误：
-
+**场景 B: 缺少依赖 (智能建议)**
 ```bash
-$ mvn install
-... BUILD FAILURE ...
+$ cargo run
+error: no command named `cargo` found...
 
 $ k
-🔍 正在分析命令意图: mvn install
-✅ 审计通过，正在后台重运行命令捕获输出...
-...
---- AI 建议 ---
-构建失败是因为缺少依赖包 xxxx，建议执行...
+--- AI 分析 ---
+系统未找到 cargo 命令，可能是 Rust 环境未安装。
+
+💡 建议: 请根据您的网络环境选择合适的安装方式。
+
+? 请选择建议的命令 (Ctrl+C 取消)
+▸ curl --proto '=https' ... | sh   官方脚本安装 Rust
+  brew install rust                通过 Homebrew 安装 (macOS)
+```
+
+**场景 C: 成功后的预测**
+```bash
+$ mkdir my-project
+
+$ k
+--- AI 分析 ---
+目录 'my-project' 创建成功。
+
+? 请选择建议的命令 (Ctrl+C 取消)
+▸ cd my-project   进入新创建的目录
+  ls -l           查看目录权限
 ```
 
 ### 2. 调试模式
@@ -127,16 +144,6 @@ $ k -d
 # |& 同时传递 stdout 和 stderr
 $ ./dangerous_script.sh |& kao
 ```
-
-## 🛠️ 技术原理
-
-Kao 采用 **双源校验 (Dual-Source Validation)** 策略来确保兼容性与安全性：
-
-1.  **环境检测**: 自动识别当前是否为 Warp 终端 (`TERM_PROGRAM=WarpTerminal`)。
-2.  **策略分发**: 
-    *   **Warp 环境**: 优先读取 Warp 内部 SQLite 数据库 (`warp.sqlite`)。如果 Shell 传入的参数与 DB 记录一致，直接复用 DB 中的 Output，实现 **零重放分析**。
-    *   **普通环境**: 接收 Shell 传入的上一条命令，通过 AI 进行 **安全审计** (判断是否为 `rm`, `mv` 等高风险操作)。安全则后台静默重放抓取 Output，不安全则拦截。
-3.  **交互执行**: 利用 `eval` 机制，让 Go 程序只负责计算修正命令，由 Shell 负责最终执行，完美解决环境变量和历史记录问题。
 
 ## 📝 License
 
