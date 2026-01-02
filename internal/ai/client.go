@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"kao/internal/config"
+	"regexp"
 	"runtime"
 	"strings"
 
@@ -49,19 +50,19 @@ Current系统环境: %s/%s
 命令: %s
 
 请返回 JSON 格式结果，包含以下字段：
-1. "type": "typo" (拼写错误), "logic" (逻辑/参数错误), "unsafe" (破坏性/副作用).
-2. "advice": 针对该意图的自然语言建议或指导。
-3. "suggestions": 建议列表，对象数组 [{"cmd": "...", "desc": "..."}].
+1. "type": "typo", "logic", "unsafe".
+2. "advice": 针对该意图的自然语言建议。请使用清晰的分点格式 (Markdown)，允许换行。
+3. "suggestions": 建议列表 [{"cmd": "...", "desc": "..."}]。
    - 如果是 "typo"，列出 1-3 个修正命令。
-   - "desc" 说明修正内容 (如 "修正拼写 branch")。
-   - 严禁包含占位符。
-4. "safeToRun": 布尔值。只读命令或安全重放命令为 true。
+   - "desc" 字段必须说明**这是什么修正**。
+   - **严禁**包含需要用户修改的占位符 (如 <IP>, [file])，必须是完整可执行命令。
+4. "safeToRun": 布尔值。
 5. "reason": 简短中文说明。
 
 示例: {
   "type": "typo", 
   "advice": "您似乎输错了命令，请检查拼写。",
-  "suggestions": [{"cmd": "git branch", "desc": "修正拼写错误"}], 
+  "suggestions": [{"cmd": "git branch", "desc": "修正拼写错误 'brnch' -> 'branch'"}], 
   "safeToRun": false, 
   "reason": "拼写错误"
 }
@@ -85,6 +86,7 @@ Current系统环境: %s/%s
 		return &IntentAnalysis{Type: "unsafe", SafeToRun: false, Reason: "AI返回格式异常"}, nil
 	}
 
+	result.Suggestions = sanitizeSuggestions(result.Suggestions)
 	return &result, nil
 }
 
@@ -95,7 +97,6 @@ type ErrorAnalysis struct {
 }
 
 func (c *Client) AnalyzeError(ctx context.Context, cmd, output string) (*ErrorAnalysis, error) {
-	// 截断逻辑
 	const maxLen = 3000
 	if len(output) > maxLen {
 		output = output[:1500] + "\n... (中间内容已截断) ...\n" + output[len(output)-1500:]
@@ -111,18 +112,18 @@ Current系统环境: %s/%s
 
 请分析并返回 JSON：
 1. "explanation": 简明扼要的错误原因分析（或执行结果概括）。
-2. "advice": 自然语言形式的修复或后续操作建议。
-   - 如果需要用户手动操作（如修改代码、切换特定目录），请在这里详细说明。
+2. "advice": 针对该情况的详细指导建议。
+   - **格式要求**: 使用 Markdown 列表或分段，清晰易读。如果涉及无法自动执行的命令（如需要具体路径），请在这里列出并解释，**不要**放到 suggestions 里。
    - 可以在这里解释为什么会推荐下面的命令。
-3. "suggestions": 建议列表，对象数组 [{"cmd": "...", "desc": "..."}]。
+3. "suggestions": 建议列表 [{"cmd": "...", "desc": "..."}]。
    - 列出 1-3 个**完整、可直接执行**的修复或后续命令。
-   - **严禁**包含占位符 (如 <path>)。如果无法给出确切命令，请留空，并在 "advice" 中说明。
-   - "desc" 简短说明该命令的作用 (如 "安装 Rust", "初始化仓库")。
+   - **绝对禁止**包含占位符 (如 <path>, /path/to, [file])。如果无法给出确切命令，请留空，只在 advice 中说明即可。
+   - "desc" 简短说明该命令的作用。
 
 示例: {
   "explanation": "当前目录不是 Git 仓库。",
-  "advice": "如果您想新建仓库，请使用 init；如果想使用现有仓库，请先 cd 到目标目录。",
-  "suggestions": [{"cmd": "git init", "desc": "在当前目录初始化新仓库"}]
+  "advice": "您可以选择：\n1. 在当前目录初始化 (推荐)\n2. 切换到正确的仓库目录 (请手动执行 'cd path/to/repo')",
+  "suggestions": [{"cmd": "git init", "desc": "在当前目录初始化"}]
 }
 `, runtime.GOOS, runtime.GOARCH, cmd, output)
 
@@ -142,12 +143,14 @@ Current系统环境: %s/%s
 	var result ErrorAnalysis
 	if err := json.Unmarshal([]byte(content), &result); err != nil {
 		return &ErrorAnalysis{
-			Explanation: content, // 降级
+			Explanation: content, 
 			Advice:      "",
 			Suggestions: []Suggestion{},
-		}, nil
+		},
+		nil
 	}
 
+	result.Suggestions = sanitizeSuggestions(result.Suggestions)
 	return &result, nil
 }
 
@@ -155,4 +158,23 @@ func cleanJSON(content string) string {
 	content = strings.TrimPrefix(content, "```json")
 	content = strings.TrimSuffix(content, "```")
 	return strings.TrimSpace(content)
+}
+
+// 预编译正则，匹配常见的占位符模式
+// 1. <...> : 尖括号占位符
+// 2. [...] : 方括号占位符 (但需小心数组索引，这里主要匹配 [option] 这种)
+// 3. path/to/ : 典型路径占位
+// 4. your_ : 典型变量占位
+var placeholderRegex = regexp.MustCompile(`<[^>]+>|[[a-zA-Z_]+]|\bpath/to/|\byour_`)
+
+func sanitizeSuggestions(suggestions []Suggestion) []Suggestion {
+	var clean []Suggestion
+	for _, s := range suggestions {
+		// 如果命令匹配到占位符正则，则丢弃
+		if placeholderRegex.MatchString(s.Cmd) {
+			continue
+		}
+		clean = append(clean, s)
+	}
+	return clean
 }
