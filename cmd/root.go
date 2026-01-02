@@ -35,8 +35,9 @@ func debugLog(format string, args ...interface{}) {
 
 var rootCmd = &cobra.Command{
 	Use:   "kao [command]",
-	Short: "Kao 是一个基于 AI 的终端错误分析工具",
-	Long: `Kao (考) 可以自动捕获上一个命令的错误输出，并结合 AI 给出修复建议。
+	Short: "Kao (靠) - 你的智能终端副驾驶",
+	Long: `Kao (读作 "靠") 源于程序员遇到报错时最常说的那个词。
+它是一个基于 AI 的终端伴侣，可以自动捕获上一个命令的错误输出，并结合 AI 给出修复建议。
 支持直接运行 (自动分析上一个命令) 或 通过管道接收输出分析。`,
 	Run: func(cmd *cobra.Command, args []string) {
 		// 为了支持 eval 模式，所有非结果输出都必须走 Stderr
@@ -220,23 +221,25 @@ var rootCmd = &cobra.Command{
 	},
 }
 
-// handleFixSelection 保持不变 
+// handleFixSelection 处理交互式选择
 func handleFixSelection(suggestions []string) {
-	items := append(suggestions, "❌ Cancel")
 	prompt := promptui.Select{
-		Label: "检测到拼写错误，请选择修正后的命令执行",
-		Items: items,
+		Label: "检测到拼写错误，请选择修正后的命令执行 (Ctrl+C 取消)",
+		Items: suggestions,
 		Stdout: os.Stderr,
 	}
+
 	_, result, err := prompt.Run()
+
 	if err != nil {
+		if err == promptui.ErrInterrupt {
+			debugLog("用户取消了选择 (Ctrl+C)")
+			return
+		}
 		fmt.Fprintf(os.Stderr, "选择失败 %v\n", err)
 		return
 	}
-	if result == "❌ Cancel" {
-		debugLog("用户取消了选择")
-		return
-	}
+
 	debugLog("用户选择了修正命令: %s", result)
 	fmt.Print(result)
 }
