@@ -1,152 +1,82 @@
-# Kao (靠) - 你的智能终端副驾驶 🤖
+# Kao (靠)
 
-**Kao** (读作 "靠") 是一个基于 AI 的终端命令行伴侣。这个名字源于程序员在遇到 Bug 或命令报错时最常说的那个词："靠！"。现在，当你再想说这个词的时候，只需要敲一下 `k`，它就能帮你分析原因、修复错误甚至自动执行修正后的命令。
+一个运行在 [herdr](https://herdr.dev) pane 内的 AI 命令修复工具。输错命令时,在终端跑一下 `k`,它读取当前 pane 的滚动缓冲,让 LLM 定位上一条真实命令,给出可执行的修复建议,你选中后填入命令行或直接执行。
 
-它不仅仅是一个简单的 "wrapper"，更是一个集成了 **AI 安全审计**、**Warp 终端原生支持** 和 **交互式修复** 的生产力工具。
+名字源于程序员看到命令报错时那句 "靠!"。
 
-## ✨ 核心特性
+## ✨ 特性
 
-- **⚡️ Warp 终端原生集成**: 如果你在使用 [Warp](https://www.warp.dev/) 终端，Kao 会直接读取其内部数据库获取报错信息。**零重放、零副作用、100% 精确**。
-- **🛡️ AI 安全审计**: 对于普通终端，Kao 在后台重运行命令前，会先让 AI 判断该命令是否安全。危险命令 (如 `rm`, `mv`, 非幂等 API) 会被自动拦截。
-- **🧠 智能预测与建议**: 
-  - **出错时**: 给出详细原因分析 + 自然语言指导 (Advice) + 一键修复命令 (Suggestions)。
-  - **成功时**: 解释执行结果 + 预测你可能想执行的后续命令 (如 `mkdir` -> `cd`)。
-- **🌍 系统环境感知**: AI 会根据你的操作系统 (macOS/Linux) 推荐最原生的工具 (如 `brew` vs `apt`)。
-- **🔧 交互式智能修复**: 
-  - 漂亮的交互列表，包含命令功能注释。
-  - 支持 `Ctrl+C` 快捷取消。
+- **herdr 原生**:通过 `herdr` CLI 读取 pane 滚动缓冲、向 pane 注入文本,无重放。只认 `HERDR_ENV`/`HERDR_PANE_ID` 环境,必须运行在 herdr pane 内。
+- **AI 诊断**:快照末尾是用户输入的 `k`/`kao` 行,模型识别并忽略它,分析其上一条真实命令及其输出,判断成败并给出 0-3 条建议(每条完整、可直接执行、无占位符)。
+- **thefuck 式选择**:promptui 交互列表,Enter 选定,Ctrl+C 取消。选中后默认把命令**填入**当前命令行(prefill,等你回车);可配置为直接执行。
+- **干净输出**:分析过程与"识别到命令"等状态信息默认不打印,只有选择列表本身。选中后不打印 `✓ {...}` 确认行。
 
 ## 📦 安装
 
 ### 源码编译
 
 ```bash
-# 1. 克隆项目
-git clone https://github.com/zqr233qr/kao.git
+git clone https://github.com/kiry163/kao.git
 cd kao
-
-# 2. 编译
-go build -o kao
-
-# 3. 移动到 PATH 路径下
-mv kao /usr/local/bin/
+go build -o k
 ```
+
+`k` 可执行文件建议放在 PATH 下(`mv k /usr/local/bin/`),或直接 `./k` 使用。
 
 ## ⚙️ 配置
 
-Kao 依赖 OpenAI 兼容的 API (如 OpenAI, Azure, DeepSeek 等)。请在你的 `.zshrc` 或 `.bashrc` 中设置以下环境变量：
+配置文件位置(首次运行会自动创建默认文件):
 
-```bash
-export KAO_API_KEY="sk-xxxxxxxxxxxxxxxx"
-export KAO_BASE_URL="https://api.openai.com/v1" # 可选，默认为 OpenAI 官方
-export KAO_MODEL="gpt-3.5-turbo"                # 可选，默认为 gpt-3.5-turbo
+- `$XDG_CONFIG_HOME/kao/config.yaml`,未设置时 `~/.config/kao/config.yaml`
+
+```yaml
+provider: openai_compatible   # openai | openai_compatible | qwen | deepseek
+api_key: ""                   # openai_compatible 可留空(本地模型)
+model: gpt-4o-mini
+base_url: http://127.0.0.1:11434/v1
+thinking: false
+snapshot_lines: 300
+auto_execute: false           # true: 选中后直接执行,默认 false 为填入命令行
 ```
 
-## 🚀 Shell 集成 (强烈推荐)
-
-为了获得最佳体验（如自动获取上个命令、交互式执行修正命令），请将以下函数添加到你的 Shell 配置文件中 (`~/.zshrc` 或 `~/.bashrc`)。
-
-### Zsh / Bash 配置
+## 🚀 使用
 
 ```bash
-# === Kao 快捷指令 ===
-function k() {
-    # 1. 获取上一条实际执行的命令 (排除 k/kao 自身)
-    local LAST_CMD=""
-    if [ -n "$ZSH_VERSION" ]; then
-        # Zsh 适配
-        LAST_CMD=$(fc -ln -10 | grep -vE '^\s*(k|kao)\b' | tail -1)
-    else
-        # Bash 适配
-        LAST_CMD=$(history | tail -n 10 | grep -vE '^\s*[0-9]+\s+(k|kao)\b' | tail -n 1 | sed 's/^\s*[0-9]\+\s\+//')
-    fi
-
-    # 2. 调用 kao 进入交互模式
-    #    "$@" 允许传递参数 (如 k -d)
-    #    kao 的交互界面输出到 stderr，最终选定的命令输出到 stdout
-    local FIXED_CMD=$(kao --fix "$@" "$LAST_CMD")
-
-    # 3. 如果 Kao 返回了修正后的命令，则在当前 Shell 执行
-    if [ -n "$FIXED_CMD" ]; then
-        # 将修正后的命令加入历史记录
-        if [ -n "$ZSH_VERSION" ]; then
-            print -s "$FIXED_CMD"
-        else
-            history -s "$FIXED_CMD"
-        fi
-        
-        echo -e "\n\033[1;32mRunning: $FIXED_CMD\033[0m"
-        eval "$FIXED_CMD"
-    fi
-}
-```
-
-配置完成后，记得执行 `source ~/.zshrc` 或重启终端。
-
-## 📖 使用指南
-
-### 1. 自动分析与修复 (最常用)
-
-**场景 A: 拼写错误**
-```bash
-$ git brnch
-git: 'brnch' is not a git command. See 'git --help'.
+$ git statts
+git: 'statts' is not a git command. See 'git --help'.
 
 $ k
-? 请选择建议的命令 (Ctrl+C 取消)
-▸ git branch  修正拼写错误 (推荐)
+选择要填入的命令 (回车填充; 再次回车执行; Ctrl+C 取消)
+  ▸ git status  修正 git statts -> git status
 ```
 
-**场景 B: 缺少依赖 (智能建议)**
-```bash
-$ cargo run
-error: no command named `cargo` found...
+选中后默认把 `git status` 填入命令行,你按回车执行。
 
-$ k
---- AI 分析 ---
-系统未找到 cargo 命令，可能是 Rust 环境未安装。
+### 直接执行
 
-💡 建议: 请根据您的网络环境选择合适的安装方式。
-
-? 请选择建议的命令 (Ctrl+C 取消)
-▸ curl --proto '=https' ... | sh   官方脚本安装 Rust
-  brew install rust                通过 Homebrew 安装 (macOS)
-```
-
-**场景 C: 成功后的预测**
-```bash
-$ mkdir my-project
-
-$ k
---- AI 分析 ---
-目录 'my-project' 创建成功。
-
-? 请选择建议的命令 (Ctrl+C 取消)
-▸ cd my-project   进入新创建的目录
-  ls -l           查看目录权限
-```
-
-### 2. 调试模式
-
-如果你想知道 Kao 到底在做什么（或者是否成功读取了 Warp 数据），加上 `-d` 参数：
+要选中后直接执行命令,把配置文件里的 `auto_execute` 设为 `true`,或临时加 `-auto-execute`:
 
 ```bash
-$ k -d
-[DEBUG 10:00:00] 检测到 Warp 终端环境...
-[DEBUG 10:00:00] 成功从 Warp DB 读取记录...
+k -auto-execute
 ```
 
-### 3. 管道模式 (手动挡)
+### 消除 PTY 回显
 
-对于某些极其敏感或复杂的场景，你可以手动将日志传给 Kao：
+默认的"填入命令行"由 `k` 通过 `herdr pane send-text` 注入。因运行 `k` 时终端处于 canonical+ECHO 模式,注入的命令会在滚动缓冲里被回显一行(命令本身,非重复执行)。若想彻底干净,用 `k init` 生成一个 shell 函数:
 
 ```bash
-# |& 同时传递 stdout 和 stderr
-$ ./dangerous_script.sh |& kao
+k init   # 依 SHELL 写入 ~/.zshrc 或 ~/.bashrc,幂等
 ```
+
+函数走 `k --print`(选中命令打到 stdout,列表走 stderr)+ zsh `print -z` / bash `READLINE_LINE`,把命令直接填入当前输入缓冲区,**无 PTY 回显**。使用后直接敲 `k`,而非 `./k`。
+
+### 其他
+
+- `k --print`:选中命令打印到 stdout、列表走 stderr(供 shell 函数)。
+- `k -d`:调试日志(`[kao]` 前缀,输出到 stderr)。
+- `k --lines N`:读取 pane 行数,覆盖 `snapshot_lines`。
+- `k init`:写入 shell 函数(参见上文)。
 
 ## 📝 License
 
 MIT
-
-```
