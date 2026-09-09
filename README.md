@@ -1,33 +1,37 @@
 # Kao (靠)
 
-一个运行在 [herdr](https://herdr.dev) pane 内的 AI 命令修复工具。输错命令时,在终端跑一下 `k`,它读取当前 pane 的滚动缓冲,让 LLM 定位上一条真实命令,给出可执行的修复建议,你选中后填入命令行或直接执行。
+一个运行在 [herdr](https://herdr.dev) pane 内的 AI 命令推荐工具。在终端敲一下 `k`(可带自然语言目标),它读取当前 pane 的滚动缓冲,让 LLM 推荐你接下来该执行的命令——把修正拼写、下一步该做什么、"怎么把目录打包"这类问题变成可直接执行的命令,选中后填入命令行,你编辑确认后回车。
 
-名字源于程序员看到命令报错时那句 "靠!"。
+"靠!"——报错不用慌,靠一下就有答案。
 
 ## ✨ 特性
 
-- **herdr 原生**:通过 `herdr` CLI 读取 pane 滚动缓冲、向 pane 注入文本,无重放。只认 `HERDR_ENV`/`HERDR_PANE_ID` 环境,必须运行在 herdr pane 内。
-- **AI 诊断**:快照末尾是用户输入的 `k`/`kao` 行,模型识别并忽略它,分析其上一条真实命令及其输出,判断成败并给出 0-3 条建议(每条完整、可直接执行、无占位符)。
-- **thefuck 式选择**:promptui 交互列表,Enter 选定,Ctrl+C 取消。选中后默认把命令**填入**当前命令行(prefill,等你回车);可配置为直接执行。
-- **干净输出**:分析过程与"识别到命令"等状态信息默认不打印,只有选择列表本身。选中后不打印 `✓ {...}` 确认行。
+- **herdr 原生**:通过 `herdr` CLI 读取 pane 滚动缓冲、向 pane 注入文本(send-text 纯 prefill,不自动提交)。只认 `HERDR_ENV`/`HERDR_PANE_ID` 环境,必须运行在 herdr pane 内。
+- **两种模式,一套结构**:
+  - 上下文模式(`k`):最近命令失败则首推修正后的命令,成功则推合理的下一步。
+  - 目标查询(`k 把当前改动提交并推送`):结合工作区快照与终端上下文,推荐达成目标的命令(可多条,按执行顺序)。
+- **只推荐,不执行**:选中命令一律填入当前命令行,由你编辑(含 `<占位符>`)再回车。k 从不自动运行命令。
+- **自清洗缓冲**:发送给模型前,程序先剔除 kao/k 自身痕迹——k 调用行、空提示符行、prefill 注入回显、UI 残留——并把快照切成「最近命令区 + 更早上下文」两段。当前会话的提示符从本次调用行自动推导,无需任何配置;识别不了的场景降级为保守清洗,不猜测边界。
+- **工作区快照**(查询模式):模型能"看到"工作目录内容——优先 `tree -a -L 2`(忽略 `.git/node_modules/target/dist` 等),没有 tree 命令时退化为 `ls -la`;只读、限长、失败静默降级。
+- **干净输出**:推荐过程与中间状态不打印,只有选择列表本身。
 
 ## 📦 安装
 
-### 源码编译
+从 GitHub Releases 下载最新版本并安装到 `~/.local/bin/k`:
 
 ```bash
-git clone https://github.com/kiry163/kao.git
-cd kao
-go build -o k
+curl -fsSL https://raw.githubusercontent.com/kiry163/kao/main/install.sh | sh
 ```
 
-`k` 可执行文件建议放在 PATH 下(`mv k /usr/local/bin/`),或直接 `./k` 使用。
+需要 `curl`;安装目录可用 `INSTALL_DIR` 覆盖,指定版本可用 `KAO_VERSION`(如 `v0.1.0`)。确保安装目录在 PATH 中(`echo $PATH | grep ~/.local/bin`),之后在 herdr pane 内直接敲 `k`。
+
+查看版本:`k -v`。
 
 ## ⚙️ 配置
 
 配置文件位置(首次运行会自动创建默认文件):
 
-- `$XDG_CONFIG_HOME/kao/config.yaml`,未设置时 `~/.config/kao/config.yaml`
+- `~/.config/kao/config.yaml`
 
 ```yaml
 provider: openai_compatible   # openai | openai_compatible | qwen | deepseek
@@ -36,7 +40,6 @@ model: gpt-4o-mini
 base_url: http://127.0.0.1:11434/v1
 thinking: false
 snapshot_lines: 300
-auto_execute: false           # true: 选中后直接执行,默认 false 为填入命令行
 ```
 
 ## 🚀 使用
@@ -47,35 +50,25 @@ git: 'statts' is not a git command. See 'git --help'.
 
 $ k
 选择要填入的命令 (回车填充; 再次回车执行; Ctrl+C 取消)
-  ▸ git status  修正 git statts -> git status
+  ▸ git status  修正拼写:statts → status
 ```
 
-选中后默认把 `git status` 填入命令行,你按回车执行。
+选中后把 `git status` 填入命令行,你按回车执行。
 
-### 直接执行
-
-要选中后直接执行命令,把配置文件里的 `auto_execute` 设为 `true`,或临时加 `-auto-execute`:
+### 目标查询
 
 ```bash
-k -auto-execute
+$ k 把当前改动提交并推送
+选择要填入的命令 (回车填充; 再次回车执行; Ctrl+C 取消)
+  ▸ git add -A && git commit -m "<COMMIT_MESSAGE>" && git push  提交并推送全部改动
 ```
 
-### 消除 PTY 回显
-
-默认的"填入命令行"由 `k` 通过 `herdr pane send-text` 注入。因运行 `k` 时终端处于 canonical+ECHO 模式,注入的命令会在滚动缓冲里被回显一行(命令本身,非重复执行)。若想彻底干净,用 `k init` 生成一个 shell 函数:
-
-```bash
-k init   # 依 SHELL 写入 ~/.zshrc 或 ~/.bashrc,幂等
-```
-
-函数走 `k --print`(选中命令打到 stdout,列表走 stderr)+ zsh `print -z` / bash `READLINE_LINE`,把命令直接填入当前输入缓冲区,**无 PTY 回显**。使用后直接敲 `k`,而非 `./k`。
+只有你本人知道的值(提交信息、分支名等)用 `<英文大写>` 占位符表示,选中后在命令行里替换再回车。上下文模式(修复/下一步)仍然禁止占位符——修复命令必须拿来就能跑。
 
 ### 其他
 
-- `k --print`:选中命令打印到 stdout、列表走 stderr(供 shell 函数)。
-- `k -d`:调试日志(`[kao]` 前缀,输出到 stderr)。
-- `k --lines N`:读取 pane 行数,覆盖 `snapshot_lines`。
-- `k init`:写入 shell 函数(参见上文)。
+- `k -v` 打印版本(`version`/`commit`/`date` 在发布构建中由 CI 注入)。
+- 所有参数都是目标文本,无需引号;目标以 `-` 开头也可直接传(如 `k -rf /tmp`)。
 
 ## 📝 License
 

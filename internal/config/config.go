@@ -16,22 +16,17 @@ type Config struct {
 	BaseURL       string `yaml:"base_url"`
 	Thinking      bool   `yaml:"thinking"`
 	SnapshotLines int    `yaml:"snapshot_lines"`
-	AutoExecute   bool   `yaml:"auto_execute"`
 }
 
-// DefaultPath returns the config file path: $XDG_CONFIG_HOME/kao/config.yaml,
-// falling back to ~/.config/kao/config.yaml. os.UserConfigDir() is deliberately
-// not used: on macOS it resolves to ~/Library/Application Support.
+// DefaultPath returns the config file path ~/.config/kao/config.yaml.
+// os.UserConfigDir() is deliberately not used: on macOS it resolves to
+// ~/Library/Application Support.
 func DefaultPath() string {
-	base := os.Getenv("XDG_CONFIG_HOME")
-	if base == "" {
-		home, err := os.UserHomeDir()
-		if err != nil || home == "" {
-			home = "~"
-		}
-		base = filepath.Join(home, ".config")
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		home = "~"
 	}
-	return filepath.Join(base, "kao", "config.yaml")
+	return filepath.Join(home, ".config", "kao", "config.yaml")
 }
 
 var allowedProviders = []string{"openai", "openai_compatible", "qwen", "deepseek"}
@@ -46,7 +41,6 @@ model: gpt-4o-mini
 base_url: http://127.0.0.1:11434/v1
 thinking: false
 snapshot_lines: 300
-auto_execute: false
 `
 }
 

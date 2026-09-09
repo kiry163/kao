@@ -3,25 +3,24 @@ package ui
 import (
 	"os"
 
-	"github.com/kiry163/kao/internal/analyze"
+	"github.com/kiry163/kao/internal/recommend"
 	"github.com/manifoldco/promptui"
 )
 
-// Select shows a thefuck-style list of suggestions. Enter fills the chosen
-// command into the pane's command line (no submit); Ctrl+C cancels and returns
-// nil, nil. The list is rendered to stderr so stdout carries only the selected
-// command in print mode.
-func Select(suggestions []analyze.Suggestion) (*analyze.Suggestion, error) {
+// Select shows a thefuck-style list of recommended commands. Enter returns the
+// chosen command (the caller fills it into the pane); Ctrl+C cancels and
+// returns nil, nil. The list is rendered to stderr so stdout stays clean.
+func Select(recommendations []recommend.Recommendation) (*recommend.Recommendation, error) {
 	templates := &promptui.SelectTemplates{
 		Label:    "{{ . }}",
-		Active:   "▸ {{ .Cmd | cyan }}  {{ .Desc | faint }}",
-		Inactive: "  {{ .Cmd }}  {{ .Desc | faint }}",
+		Active:   "▸ {{ .Command | cyan }}  {{ .Desc | faint }}",
+		Inactive: "  {{ .Command }}  {{ .Desc | faint }}",
 		Selected: "",
 	}
 
 	prompt := promptui.Select{
 		Label:        "选择要填入的命令 (回车填充; 再次回车执行; Ctrl+C 取消)",
-		Items:        suggestions,
+		Items:        recommendations,
 		Templates:    templates,
 		Size:         5,
 		HideSelected: true,
@@ -36,5 +35,5 @@ func Select(suggestions []analyze.Suggestion) (*analyze.Suggestion, error) {
 		}
 		return nil, err
 	}
-	return &suggestions[i], nil
+	return &recommendations[i], nil
 }
