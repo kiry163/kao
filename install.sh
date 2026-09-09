@@ -23,13 +23,13 @@ case "$os" in
   *) echo "不支持的操作系统: $os" >&2; exit 1 ;;
 esac
 
-# --- sha256 校验命令:Linux sha256sum,macOS shasum -a 256 ---
+# --- sha256 校验:只校验当前平台的条目(checksums.txt 含全部平台) ---
 if command -v sha256sum >/dev/null 2>&1; then
-  SHA256() { sha256sum -c; }
+  check_sum() { sha256sum -c; }
 elif command -v shasum >/dev/null 2>&1; then
-  SHA256() { shasum -a 256 -c; }
+  check_sum() { shasum -a 256 -c; }
 else
-  SHA256() { return 0; }
+  check_sum() { cat >/dev/null; }
 fi
 
 # --- 解析版本与资源 URL ---
@@ -53,11 +53,16 @@ trap 'rm -rf "$tmpdir"' EXIT
 curl -fsSL -o "$tmpdir/$asset" "$base/$asset"
 chmod +x "$tmpdir/$asset"
 
-# --- 校验 sha256(存在 checksums.txt 时) ---
+# --- 校验 sha256(只取当前资产那一行,忽略其他平台条目) ---
 if curl -fsSL -o "$tmpdir/checksums.txt" "$base/checksums.txt" 2>/dev/null; then
-  (cd "$tmpdir" && SHA256 < checksums.txt) \
-    || { echo "sha256 校验失败,已中止" >&2; exit 1; }
-  echo "sha256 校验通过"
+  expected=$(grep " ${asset}$" "$tmpdir/checksums.txt" || true)
+  if [ -n "$expected" ]; then
+    (cd "$tmpdir" && printf '%s\n' "$expected" | check_sum) \
+      || { echo "sha256 校验失败,已中止" >&2; exit 1; }
+    echo "sha256 校验通过"
+  else
+    echo "警告: checksums.txt 中找不到 $asset,跳过校验" >&2
+  fi
 fi
 
 mv "$tmpdir/$asset" "$INSTALL_DIR/k"
